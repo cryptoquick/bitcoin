@@ -147,6 +147,11 @@ public:
     {
         return CScript() << CScript::EncodeOP_N(id.GetWitnessVersion()) << id.GetWitnessProgram();
     }
+
+    CScript operator()(const WitnessV3P2QRH& id) const
+    {
+        return CScript() << CScript::EncodeOP_N(3) << ToByteVector(id);
+    }
 };
 
 class ValidDestinationVisitor
@@ -160,6 +165,7 @@ public:
     bool operator()(const WitnessV0ScriptHash& dest) const { return true; }
     bool operator()(const WitnessV1Taproot& dest) const { return true; }
     bool operator()(const WitnessUnknown& dest) const { return true; }
+    bool operator()(const WitnessV3P2QRH& dest) const { return true; }
 };
 } // namespace
 
