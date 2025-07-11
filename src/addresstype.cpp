@@ -87,6 +87,12 @@ bool ExtractDestination(const CScript& scriptPubKey, CTxDestination& addressRet)
         addressRet = tap;
         return true;
     }
+    case TxoutType::WITNESS_V3_P2QRH: {
+        WitnessV3P2QRH p2qrh;
+        std::copy(vSolutions[0].begin(), vSolutions[0].end(), p2qrh.begin());
+        addressRet = p2qrh;
+        return true;
+    }
     case TxoutType::ANCHOR: {
         addressRet = PayToAnchor();
         return true;
