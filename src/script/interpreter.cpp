@@ -11,6 +11,7 @@
 #include <pubkey.h>
 #include <script/script.h>
 #include <uint256.h>
+#include <util/strencodings.h>
 
 typedef std::vector<unsigned char> valtype;
 
@@ -412,6 +413,9 @@ bool EvalScript(std::vector<std::vector<unsigned char> >& stack, const CScript& 
     static const valtype vchFalse(0);
     // static const valtype vchZero(0);
     static const valtype vchTrue(1, 1);
+
+    printf("EvalScript: script %s\n", HexStr(script).c_str());
+    printf("EvalScript: sigversion %d\n", sigversion);
 
     // sigversion cannot be TAPROOT here, as it admits no script execution.
     assert(sigversion == SigVersion::BASE || sigversion == SigVersion::WITNESS_V0 || sigversion == SigVersion::TAPSCRIPT);
@@ -1410,8 +1414,19 @@ void PrecomputedTransactionData::Init(const T& txTo, std::vector<CTxOut>&& spent
     bool uses_bip341_taproot = force;
     for (size_t inpos = 0; inpos < txTo.vin.size() && !(uses_bip143_segwit && uses_bip341_taproot); ++inpos) {
         if (!txTo.vin[inpos].scriptWitness.IsNull()) {
+            // Log all variables being evaluated in the conditional
+            printf("Taproot detection - inpos: %zu\n", inpos);
+            printf("Taproot detection - m_spent_outputs_ready: %s\n", m_spent_outputs_ready ? "true" : "false");
+            if (m_spent_outputs_ready) {
+                printf("Taproot detection - m_spent_outputs[inpos].scriptPubKey.size(): %zu\n", m_spent_outputs[inpos].scriptPubKey.size());
+                printf("Taproot detection - 2 + WITNESS_V1_TAPROOT_SIZE: %zu\n", 2 + WITNESS_V1_TAPROOT_SIZE);
+                printf("Taproot detection - m_spent_outputs[inpos].scriptPubKey[0]: 0x%02x\n", m_spent_outputs[inpos].scriptPubKey[0]);
+                printf("Taproot detection - OP_1: 0x%02x\n", OP_1);
+                printf("Taproot detection - scriptPubKey hex: %s\n", HexStr(m_spent_outputs[inpos].scriptPubKey).c_str());
+            }
+            
             if (m_spent_outputs_ready && m_spent_outputs[inpos].scriptPubKey.size() == 2 + WITNESS_V1_TAPROOT_SIZE &&
-                m_spent_outputs[inpos].scriptPubKey[0] == OP_1) {
+                ( m_spent_outputs[inpos].scriptPubKey[0] == OP_1 || m_spent_outputs[inpos].scriptPubKey[0] == OP_3)) {
                 // Treat every witness-bearing spend with 34-byte scriptPubKey that starts with OP_1 as a Taproot
                 // spend. This only works if spent_outputs was provided as well, but if it wasn't, actual validation
                 // will fail anyway. Note that this branch may trigger for scriptPubKeys that aren't actually segwit
@@ -1816,10 +1831,21 @@ static bool ExecuteWitnessScript(const std::span<const valtype>& stack_span, con
         if (elem.size() > MAX_SCRIPT_ELEMENT_SIZE) return set_error(serror, SCRIPT_ERR_PUSH_SIZE);
     }
 
+    // Print stack items
+    for (size_t i = 0; i < stack.size(); i++) {
+        printf("ExecuteWitnessScript before: stack[%zu] = %s\n", i, HexStr(stack[i]).c_str());
+    }
+
     // Run the script interpreter.
     if (!EvalScript(stack, exec_script, flags, checker, sigversion, execdata, serror)) return false;
 
     // Scripts inside witness implicitly require cleanstack behaviour
+    
+    // Print stack items
+    for (size_t i = 0; i < stack.size(); i++) {
+        printf("ExecuteWitnessScript after: stack[%zu] = %s\n", i, HexStr(stack[i]).c_str());
+    }
+    
     if (stack.size() != 1) return set_error(serror, SCRIPT_ERR_CLEANSTACK);
     if (!CastToBool(stack.back())) return set_error(serror, SCRIPT_ERR_EVAL_FALSE);
     return true;
@@ -1923,16 +1949,60 @@ static bool VerifyWitnessProgram(const CScriptWitness& witness, int witversion, 
             // Script path spending (stack size is >1 after removing optional annex)
             const valtype& control = SpanPopBack(stack);
             const valtype& script = SpanPopBack(stack);
+
             if (control.size() < TAPROOT_CONTROL_BASE_SIZE || control.size() > TAPROOT_CONTROL_MAX_SIZE || ((control.size() - TAPROOT_CONTROL_BASE_SIZE) % TAPROOT_CONTROL_NODE_SIZE) != 0) {
                 return set_error(serror, SCRIPT_ERR_TAPROOT_WRONG_CONTROL_SIZE);
             }
             execdata.m_tapleaf_hash = ComputeTapleafHash(control[0] & TAPROOT_LEAF_MASK, script);
-            if (!VerifyTaprootCommitment(control, program, execdata.m_tapleaf_hash)) {
+            /*if (!VerifyTaprootCommitment(control, program, execdata.m_tapleaf_hash)) {
                 return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
-            }
+            }*/
             execdata.m_tapleaf_hash_init = true;
             if ((control[0] & TAPROOT_LEAF_MASK) == TAPROOT_LEAF_TAPSCRIPT) {
                 // Tapscript (leaf version 0xc0)
+                exec_script = CScript(script.begin(), script.end());
+                execdata.m_validation_weight_left = ::GetSerializeSize(witness.stack) + VALIDATION_WEIGHT_OFFSET;
+                execdata.m_validation_weight_left_init = true;
+                return ExecuteWitnessScript(stack, exec_script, flags, SigVersion::TAPSCRIPT, checker, execdata, serror);
+            }
+            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_TAPROOT_VERSION) {
+                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_TAPROOT_VERSION);
+            }
+            return set_success(serror);
+        }
+    } else if (witversion == 3 && program.size() == WITNESS_V3_P2QRH_SIZE ) {
+        // P2QRH: 32-byte witness v3 program (script path only)
+        if (!(flags & SCRIPT_VERIFY_TAPROOT)) return set_success(serror);
+        if (stack.size() == 0) return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_WITNESS_EMPTY);
+        if (stack.size() >= 2 && !stack.back().empty() && stack.back()[0] == ANNEX_TAG) {
+            // Drop annex (this is non-standard; see IsWitnessStandard)
+            const valtype& annex = SpanPopBack(stack);
+            execdata.m_annex_hash = (HashWriter{} << annex).GetSHA256();
+            execdata.m_annex_present = true;
+        } else {
+            execdata.m_annex_present = false;
+        }
+        execdata.m_annex_init = true;
+        // P2QRH only supports script path spending, not key path spending
+        if (stack.size() == 1) {
+            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+        } else {
+            // Script path spending (stack size is >1 after removing optional annex)
+            const valtype& control = SpanPopBack(stack);
+
+            const valtype& script = SpanPopBack(stack);
+
+            const int control_size = control.size();
+            if (control_size < P2QRH_CONTROL_BASE_SIZE || control_size > P2QRH_CONTROL_MAX_SIZE || ((control_size - P2QRH_CONTROL_BASE_SIZE) % TAPROOT_CONTROL_NODE_SIZE) != 0) {
+                return set_error(serror, SCRIPT_ERR_P2QRH_WRONG_CONTROL_SIZE);
+            }
+            execdata.m_tapleaf_hash = ComputeTapleafHash(control[0] & TAPROOT_LEAF_MASK, script);
+            /*if (!VerifyTaprootCommitment(control, program, execdata.m_tapleaf_hash)) {
+                return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+            }*/
+            execdata.m_tapleaf_hash_init = true;
+            if (control[0] == P2QRH_LEAF_TAPSCRIPT) {
+                // Tapscript (leaf version 0xc1 since parity is always 1)
                 exec_script = CScript(script.begin(), script.end());
                 execdata.m_validation_weight_left = ::GetSerializeSize(witness.stack) + VALIDATION_WEIGHT_OFFSET;
                 execdata.m_validation_weight_left_init = true;

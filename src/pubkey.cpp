@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstdio>  // Add this include for printf
 
 using namespace util::hex_literals;
 
@@ -230,9 +231,128 @@ bool XOnlyPubKey::IsFullyValid() const
 bool XOnlyPubKey::VerifySchnorr(const uint256& msg, std::span<const unsigned char> sigbytes) const
 {
     assert(sigbytes.size() == 64);
+    
+    // Log the input parameters
+    printf("XOnlyPubKey::VerifySchnorr - Input parameters:\n");
+    printf("  sigbytes.size(): %zu\n", sigbytes.size());
+    printf("  msg (hex): ");
+    for (int i = 0; i < 32; i++) {
+        printf("%02x", msg.begin()[i]);
+    }
+    printf("\n");
+    printf("  sigbytes (hex): ");
+    for (size_t i = 0; i < sigbytes.size(); i++) {
+        printf("%02x", sigbytes[i]);
+    }
+    printf("\n");
+    printf("  m_keydata (hex): ");
+    for (size_t i = 0; i < m_keydata.size(); i++) {
+        printf("%02x", m_keydata.data()[i]);
+    }
+    printf("\n");
+    
+    // Check if the public key is valid
+    printf("  IsFullyValid(): %s\n", IsFullyValid() ? "true" : "false");
+    
     secp256k1_xonly_pubkey pubkey;
-    if (!secp256k1_xonly_pubkey_parse(secp256k1_context_static, &pubkey, m_keydata.data())) return false;
-    return secp256k1_schnorrsig_verify(secp256k1_context_static, sigbytes.data(), msg.begin(), 32, &pubkey);
+    bool parse_result = secp256k1_xonly_pubkey_parse(secp256k1_context_static, &pubkey, m_keydata.data());
+    printf("  secp256k1_xonly_pubkey_parse result: %s\n", parse_result ? "true" : "false");
+    
+    if (!parse_result) {
+        printf("  FAILED: Could not parse xonly pubkey\n");
+        return false;
+    }
+    
+    // Log the parsed pubkey data
+    unsigned char serialized_pubkey[32];
+    secp256k1_xonly_pubkey_serialize(secp256k1_context_static, serialized_pubkey, &pubkey);
+    printf("  parsed pubkey (hex): ");
+    for (int i = 0; i < 32; i++) {
+        printf("%02x", serialized_pubkey[i]);
+    }
+    printf("\n");
+    
+    // Check if the signature bytes look valid (non-zero)
+    bool sig_has_nonzero = false;
+    for (size_t i = 0; i < sigbytes.size(); i++) {
+        if (sigbytes[i] != 0) {
+            sig_has_nonzero = true;
+            break;
+        }
+    }
+    printf("  signature has non-zero bytes: %s\n", sig_has_nonzero ? "true" : "false");
+    
+    // Check if the message hash looks valid (non-zero)
+    bool msg_has_nonzero = false;
+    for (int i = 0; i < 32; i++) {
+        if (msg.begin()[i] != 0) {
+            msg_has_nonzero = true;
+            break;
+        }
+    }
+    printf("  message hash has non-zero bytes: %s\n", msg_has_nonzero ? "true" : "false");
+    
+    // Log the first few bytes of signature components for debugging
+    printf("  signature R (first 16 bytes): ");
+    for (int i = 0; i < 16; i++) {
+        printf("%02x", sigbytes[i]);
+    }
+    printf("\n");
+    printf("  signature S (first 16 bytes): ");
+    for (int i = 32; i < 48; i++) {
+        printf("%02x", sigbytes[i]);
+    }
+    printf("\n");
+    
+    // Log the exact parameters being passed to secp256k1_schnorrsig_verify
+    printf("  Calling secp256k1_schnorrsig_verify with:\n");
+    printf("    context: %p\n", (void*)secp256k1_context_static);
+    printf("    sig64: %p (first byte: %02x)\n", (void*)sigbytes.data(), sigbytes[0]);
+    printf("    msg: %p (first byte: %02x)\n", (void*)msg.begin(), msg.begin()[0]);
+    printf("    msglen: 32\n");
+    printf("    pubkey: %p\n", (void*)&pubkey);
+    
+    bool verify_result = secp256k1_schnorrsig_verify(secp256k1_context_static, sigbytes.data(), msg.begin(), 32, &pubkey);
+    printf("  secp256k1_schnorrsig_verify result: %s\n", verify_result ? "true" : "false");
+    
+    // Try with a different message to see if it's a message issue
+    uint256 zero_msg;
+    zero_msg.SetNull();
+    bool zero_verify_result = secp256k1_schnorrsig_verify(secp256k1_context_static, sigbytes.data(), zero_msg.begin(), 32, &pubkey);
+    printf("  secp256k1_schnorrsig_verify with zero message: %s\n", zero_verify_result ? "true" : "false");
+    
+    // Try with a different signature to see if it's a signature issue
+    unsigned char zero_sig[64] = {0};
+    bool zero_sig_verify_result = secp256k1_schnorrsig_verify(secp256k1_context_static, zero_sig, msg.begin(), 32, &pubkey);
+    printf("  secp256k1_schnorrsig_verify with zero signature: %s\n", zero_sig_verify_result ? "true" : "false");
+    
+    // Try with byte-reversed message to check for endianness issues
+    unsigned char reversed_msg[32];
+    for (int i = 0; i < 32; i++) {
+        reversed_msg[i] = msg.begin()[31 - i];
+    }
+    printf("  reversed msg (hex): ");
+    for (int i = 0; i < 32; i++) {
+        printf("%02x", reversed_msg[i]);
+    }
+    printf("\n");
+    bool reversed_verify_result = secp256k1_schnorrsig_verify(secp256k1_context_static, sigbytes.data(), reversed_msg, 32, &pubkey);
+    printf("  secp256k1_schnorrsig_verify with reversed message: %s\n", reversed_verify_result ? "true" : "false");
+    
+    // Try with byte-reversed signature to check for signature endianness
+    unsigned char reversed_sig[64];
+    for (int i = 0; i < 64; i++) {
+        reversed_sig[i] = sigbytes[63 - i];
+    }
+    printf("  reversed sig (first 16 bytes): ");
+    for (int i = 0; i < 16; i++) {
+        printf("%02x", reversed_sig[i]);
+    }
+    printf("\n");
+    bool reversed_sig_verify_result = secp256k1_schnorrsig_verify(secp256k1_context_static, reversed_sig, msg.begin(), 32, &pubkey);
+    printf("  secp256k1_schnorrsig_verify with reversed signature: %s\n", reversed_sig_verify_result ? "true" : "false");
+    
+    return verify_result;
 }
 
 static const HashWriter HASHER_TAPTWEAK{TaggedHash("TapTweak")};
