@@ -157,6 +157,8 @@ The equivalent needs to be implemented for PQC algorithms implemented in [libbit
 | | walletcreatefundedpsbt | Creates new PSBTs with P2QRH outputs |
 | | utxoupdatepsbt | Updates PSBT data for P2QRH inputs/outputs |
 | Raw Transaction Operations | signrawtransactionwithwallet | Signs P2QRH inputs using wallet keys |
+| | testmempoolaccept | testmempoolaccept "signedhex" |
+| | sendrawtransaction | sendrawtransaction "signedhex" |
 | | createrawtransaction| createrawtransaction '[]' '{"bc1r...":0.01}'
 | | signrawtransactionwithkey | Signs P2QRH inputs with specified keys |
 | | decoderawtransaction | Decodes transactions with P2QRH inputs/outputs |
@@ -200,3 +202,98 @@ The equivalent needs to be implemented for PQC algorithms implemented in [libbit
     ```
     $ build/test/functional/rpc_validateaddress.py
     ```
+
+## Modifications
+
+### bad-txns-nonstandard-inputs
+
+```
+$ b-reg testmempoolaccept '["'''$RAW_P2QRH_SPEND_TX'''"]'
+[
+  {
+    "txid": "824244091bece2eb03a6f0dec6c8f87619dc687f10f4da03465cefd27c3007f7",
+    "wtxid": "9f3f2fbe411d6c69b1882bbf884124511592f888d2129b105f5d577cd2bfa917",
+    "allowed": false,
+    "reject-reason": "bad-txns-nonstandard-inputs",
+    "reject-details": "bad-txns-nonstandard-inputs"
+  }
+]
+```
+
+To allow for P2QRH (witness v3, similar to P2TR) funding transactions, you need to update the policy logic so that P2QRH outputs are considered standard, just like P2TR (Taproot) outputs.
+What needs to change:
+
+1. In AreInputsStandard, currently only witness v0 and v1 (P2WPKH, P2WSH, P2TR) are considered standard. P2QRH (witness v3) is not, so funding transactions to P2QRH are not allowed.
+1. In IsStandard, the Solver function returns WITNESS_UNKNOWN for any witness version it doesn't recognize, including v3. This means P2QRH outputs are not considered standard.
+
+How to fix:
+
+1. Update Solver to recognize P2QRH as a standard type.
+** Add a new TxoutType for P2QRH (e.g., WITNESS_V3_P2QRH).
+** In Solver, if witnessversion == 3 && witnessprogram.size() == WITNESS_V3_P2QRH_SIZE, return TxoutType::WITNESS_V3_P2QRH.
+1. Update IsStandard to allow P2QRH outputs.
+** Accept TxoutType::WITNESS_V3_P2QRH as standard.
+1. Update AreInputsStandard to allow spending from P2QRH outputs.
+** Accept TxoutType::WITNESS_V3_P2QRH as standard, not just WITNESS_V1_TAPROOT.
+
+
+### Witness version reserved for soft-fork upgrades
+
+```
+$ b-reg testmempoolaccept '["'''$RAW_P2QRH_SPEND_TX'''"]'
+[
+  {
+    "txid": "824244091bece2eb03a6f0dec6c8f87619dc687f10f4da03465cefd27c3007f7",
+    "wtxid": "9f3f2fbe411d6c69b1882bbf884124511592f888d2129b105f5d577cd2bfa917",
+    "allowed": false,
+    "reject-reason": "non-mandatory-script-verify-flag (Witness version reserved for soft-fork upgrades)",
+    "reject-details": "non-mandatory-script-verify-flag (Witness version reserved for soft-fork upgrades), input 0 of 824244091bece2eb03a6f0dec6c8f87619dc687f10f4da03465cefd27c3007f7 (wtxid 9f3f2fbe411d6c69b1882bbf884124511592f888d2129b105f5d577cd2bfa917), spending 6745235727bf162d190553f7da087d8484b73716f2fcf774b8c56245f5f9e619:0"
+  }
+]
+```
+
+### Invalid Taproot control block size
+
+```
+$ b-reg testmempoolaccept '["'''$RAW_P2QRH_SPEND_TX'''"]'
+[
+  {
+    "txid": "824244091bece2eb03a6f0dec6c8f87619dc687f10f4da03465cefd27c3007f7",
+    "wtxid": "9f3f2fbe411d6c69b1882bbf884124511592f888d2129b105f5d577cd2bfa917",
+    "allowed": false,
+    "reject-reason": "mandatory-script-verify-flag-failed (Invalid Taproot control block size)",
+    "reject-details": "mandatory-script-verify-flag-failed (Invalid Taproot control block size), input 0 of 824244091bece2eb03a6f0dec6c8f87619dc687f10f4da03465cefd27c3007f7 (wtxid 9f3f2fbe411d6c69b1882bbf884124511592f888d2129b105f5d577cd2bfa917), spending 6745235727bf162d190553f7da087d8484b73716f2fcf774b8c56245f5f9e619:0"
+  }
+]
+```
+
+### Taproot version reserved for soft-fork upgrades
+
+```
+$ b-reg testmempoolaccept '["'''$RAW_P2QRH_SPEND_TX'''"]'
+[
+  {
+    "txid": "61829641ab32b14a65de0d9e93feedcdd1ee7b5e40d01c43a4ca72815fa886a8",
+    "wtxid": "eeaaf921f323be39e2b8314bd4ebe7275b784eac9697634bbff975e735961213",
+    "allowed": false,
+    "reject-reason": "non-mandatory-script-verify-flag (Taproot version reserved for soft-fork upgrades)",
+    "reject-details": "non-mandatory-script-verify-flag (Taproot version reserved for soft-fork upgrades), input 0 of 61829641ab32b14a65de0d9e93feedcdd1ee7b5e40d01c43a4ca72815fa886a8 (wtxid eeaaf921f323be39e2b8314bd4ebe7275b784eac9697634bbff975e735961213), spending 6745235727bf162d190553f7da087d8484b73716f2fcf774b8c56245f5f9e619:0"
+  }
+]
+```
+
+### Stack size must be exactly one after execution
+
+```
+$ b-reg testmempoolaccept '["'''$RAW_P2QRH_SPEND_TX'''"]'
+[
+  {
+    "txid": "61829641ab32b14a65de0d9e93feedcdd1ee7b5e40d01c43a4ca72815fa886a8",
+    "wtxid": "eeaaf921f323be39e2b8314bd4ebe7275b784eac9697634bbff975e735961213",
+    "allowed": false,
+    "reject-reason": "mandatory-script-verify-flag-failed (Stack size must be exactly one after execution)",
+    "reject-details": "mandatory-script-verify-flag-failed (Stack size must be exactly one after execution), input 0 of 61829641ab32b14a65de0d9e93feedcdd1ee7b5e40d01c43a4ca72815fa886a8 (wtxid eeaaf921f323be39e2b8314bd4ebe7275b784eac9697634bbff975e735961213), spending 6745235727bf162d190553f7da087d8484b73716f2fcf774b8c56245f5f9e619:0"
+  }
+]
+
+```
