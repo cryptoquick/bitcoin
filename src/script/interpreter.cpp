@@ -2007,7 +2007,7 @@ static bool VerifyWitnessProgram(const CScriptWitness& witness, int witversion, 
 
             const valtype& script = SpanPopBack(stack);
 
-            const int control_size = control.size();
+            const size_t control_size = control.size();
             if (control_size < P2QRH_CONTROL_BASE_SIZE || control_size > P2QRH_CONTROL_MAX_SIZE || ((control_size - P2QRH_CONTROL_BASE_SIZE) % TAPROOT_CONTROL_NODE_SIZE) != 0) {
                 return set_error(serror, SCRIPT_ERR_P2QRH_WRONG_CONTROL_SIZE);
             }
