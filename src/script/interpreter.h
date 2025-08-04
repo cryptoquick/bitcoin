@@ -133,6 +133,9 @@ enum : uint32_t {
     //
     SCRIPT_VERIFY_TAPROOT = (1U << 17),
 
+    // P2QRH validation (BIP360)
+    SCRIPT_VERIFY_P2QRH = (1U << 21),
+
     // Making unknown Taproot leaf versions non-standard
     //
     SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_TAPROOT_VERSION = (1U << 18),

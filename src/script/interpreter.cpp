@@ -1987,7 +1987,24 @@ static bool VerifyWitnessProgram(const CScriptWitness& witness, int witversion, 
         }
     } else if (witversion == 3 && program.size() == WITNESS_V3_P2QRH_SIZE ) {
         // P2QRH: 32-byte witness v3 program (script path only)
-        if (!(flags & SCRIPT_VERIFY_TAPROOT)) return set_success(serror);
+        // Only apply P2QRH validation for native witness outputs, not P2SH-wrapped ones
+        if (is_p2sh) {
+            // For P2SH-wrapped witness v3, treat as WITNESS_UNKNOWN to maintain compatibility
+            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM) {
+                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM);
+            }
+            return true;
+        }
+        
+        // Only apply P2QRH validation if the flag is explicitly set
+        if (!(flags & SCRIPT_VERIFY_P2QRH)) {
+            // If P2QRH flag is not set, treat as WITNESS_UNKNOWN
+            if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM) {
+                return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM);
+            }
+            return true;
+        }
+        
         if (stack.size() == 0) return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_WITNESS_EMPTY);
         if (stack.size() >= 2 && !stack.back().empty() && stack.back()[0] == ANNEX_TAG) {
             // Drop annex (this is non-standard; see IsWitnessStandard)

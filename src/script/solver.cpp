@@ -168,8 +168,30 @@ TxoutType Solver(const CScript& scriptPubKey, std::vector<std::vector<unsigned c
             return TxoutType::WITNESS_V1_TAPROOT;
         }
         if (witnessversion == 3 && witnessprogram.size() == WITNESS_V3_P2QRH_SIZE) {
-            vSolutionsRet.push_back(std::move(witnessprogram));
-            return TxoutType::WITNESS_V3_P2QRH;
+            // Only classify as P2QRH if this is a native witness output (not a redeem script)
+            if (witnessversion == 3 && witnessprogram.size() == WITNESS_V3_P2QRH_SIZE) {
+                // Check if this looks like a redeem script (P2SH-wrapped)
+                // Redeem scripts are typically pushed onto the stack, so they might have
+                // different characteristics than native witness outputs
+                bool is_likely_redeem_script = false;
+                
+                // If this is being called in P2SH context, the script might be a redeem script
+                // We can check if the script has characteristics of a redeem script
+                if (scriptPubKey.size() > 34 && scriptPubKey[0] == 0x22) {
+                    // This looks like a pushed redeem script (0x22 = 34 bytes)
+                    is_likely_redeem_script = true;
+                }
+                
+                if (!is_likely_redeem_script) {
+                    vSolutionsRet.push_back(std::move(witnessprogram));
+                    return TxoutType::WITNESS_V3_P2QRH;
+                } else {
+                    // Treat as WITNESS_UNKNOWN if it looks like a redeem script
+                    vSolutionsRet.push_back(std::vector<unsigned char>{(unsigned char)witnessversion});
+                    vSolutionsRet.push_back(std::move(witnessprogram));
+                    return TxoutType::WITNESS_UNKNOWN;
+                }
+            }
         }
         if (scriptPubKey.IsPayToAnchor()) {
             return TxoutType::ANCHOR;
