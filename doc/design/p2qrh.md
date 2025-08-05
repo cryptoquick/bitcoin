@@ -156,7 +156,7 @@ The equivalent needs to be implemented for PQC algorithms implemented in [libbit
 | | descriptorprocesspsbt | Handles PSBTs with P2QRH descriptor data |
 | | walletcreatefundedpsbt | Creates new PSBTs with P2QRH outputs |
 | | utxoupdatepsbt | Updates PSBT data for P2QRH inputs/outputs |
-| Raw Transaction Operations | signrawtransactionwithwallet | Signs P2QRH inputs using wallet keys |
+| Raw Transaction Operations | signrawtransactionwithwallet | Signs P2QRH inputs using wallet keys
 | | testmempoolaccept | testmempoolaccept "signedhex" |
 | | sendrawtransaction | sendrawtransaction "signedhex" |
 | | createrawtransaction| createrawtransaction '[]' '{"bc1r...":0.01}'
