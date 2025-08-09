@@ -236,6 +236,7 @@ bool XOnlyPubKey::IsFullyValid() const
 bool XOnlyPubKey::VerifySchnorr(const uint256& msg, std::span<const unsigned char> sigbytes) const
 {
     assert(sigbytes.size() == 64);
+    
     secp256k1_xonly_pubkey pubkey;
     if (!secp256k1_xonly_pubkey_parse(secp256k1_context_static, &pubkey, m_keydata.data())) return false;
     return secp256k1_schnorrsig_verify(secp256k1_context_static, sigbytes.data(), msg.begin(), 32, &pubkey);
